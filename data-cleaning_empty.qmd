@@ -1,6 +1,8 @@
 ---
 title: "Data Cleaning"
 format: html
+editor_options: 
+  chunk_output_type: console
 ---
 
 
@@ -50,7 +52,9 @@ Let's focus on the non-numeric values as a starting point:
 
 ```{r}
 snowsurvey_csv %>%
-
+  count(Snow_cover) %>%
+  # Filter for characters that are non-numeric
+  filter(is.na(as.numeric(Snow_cover)))
 ```
 
 ### Data cleaning
@@ -68,7 +72,14 @@ snowsurvey_csv %>%
 Interestingly, when there is a "dot" for snow cover, it is also the case for all the other covers. Let's replace those with NA since there is no supplemental information in the provided metadata about the use of dots
 
 ```{r}
-snowsurvey_fixed <- 
+# Carmen's way (?)
+snowsurvey_fixed <- snowsurvey_csv %>%
+  mutate(Snow_cover = case_when(Snow_cover == "." ~ NA,
+                                TRUE ~ Snow_cover))
+
+# Julien's way
+snowsurvey_fixed <- snowsurvey_csv %>%
+  mutate(Snow_cover = ifelse(Snow_cover == ".", NA, Snow_cover))
 ```
 
 #### `-` values
@@ -76,14 +87,16 @@ snowsurvey_fixed <-
 Is he problem is similar with "-"?
 
 ```{r}
-snowsurvey_csv 
+snowsurvey_csv %>%
+  filter(Snow_cover == "-")
 ```
 
 
 let's set it to NA:
 
 ```{r}
-snowsurvey_fixed <- 
+snowsurvey_fixed <- snowsurvey_fixed %>%
+  mutate(Snow_cover = ifelse(Snow_cover == "-", NA, Snow_cover))
 ```
 
 #### `n/a` values
@@ -92,15 +105,15 @@ snowsurvey_fixed <-
 
 ```{r}
 snowsurvey_csv %>%
-  
+  filter(Snow_cover == "n/a")
 ```
 
 
 Same pattern, let's substitute with NA:
 
 ```{r}
-snowsurvey_fixed <- 
- 
+snowsurvey_fixed <- snowsurvey_fixed %>%
+  mutate(Snow_cover = ifelse(Snow_cover == "n/a", NA, Snow_cover))
 ```
 
 #### `unk` values
@@ -109,12 +122,14 @@ What about "unk"? It is probably an abbreviation for unknown:
 
 ```{r}
 snowsurvey_csv %>%
+  filter(Snow_cover == "unk")
   
 ```
 
 
 ```{r}
-snowsurvey_fixed <- 
+snowsurvey_fixed <- snowsurvey_fixed %>%
+  mutate(Snow_cover = ifelse(Snow_cover == "unk", NA, Snow_cover))
 ```
 
 #### `<1` values
@@ -122,11 +137,13 @@ snowsurvey_fixed <-
 Finally What should we replace"<1" with?
 
 ```{r}
-
+snowsurvey_csv %>%
+  filter(Snow_cover == "<1")
 ```
 
 ```{r}
-
+snowsurvey_fixed <- snowsurvey_fixed %>%
+  mutate(Snow_cover = ifelse(Snow_cover == "<1", "0", Snow_cover))
 ```
 
 
@@ -143,7 +160,8 @@ snowsurvey_fixed %>%
 Ok, we can do the transformation:
 
 ```{r}
-snowsurvey_fixed <- 
+snowsurvey_fixed <- snowsurvey_fixed %>%
+  mutate(Snow_cover = as.numeric(Snow_cover))
 ```
 
 Yeah we have finally a numeric column 🎉. 
@@ -154,19 +172,23 @@ Yeah we have finally a numeric column 🎉.
 We are dealing with percentages, so we should verify that all the values are between 0 and 100:
 
 ```{r}
- snowsurvey_fixed 
+ snowsurvey_fixed %>%
+  filter(Snow_cover > 100)
+
 ```
 
 We have two values above 100, with an interesting 470%! ☃️ We should probably set those values to NAs:
 
 ```{r}
-snowsurvey_fixed <- 
+snowsurvey_fixed <- snowsurvey_fixed %>%
+  mutate(Snow_cover = ifelse(Snow_cover >100, NA, Snow_cover))
 ```
 
 Let's check for negative values:
 
 ```{r}
  snowsurvey_fixed %>%
+  filter(Snow_cover < 0)
   
 ```
 
@@ -213,7 +235,11 @@ This data model is not convenient for a database, we will have to switch to a lo
 ### Data cleaning
 
 ```{r}
-species_long <- 
+species_long <- species_csv %>%
+  pivot_longer(cols = !c(Year, Site, Date, Jdate, Num_observers, All_obs_reported, Observer_hours),
+               names_to = "Species",
+               values_to = "Species_count",
+               values_transform = list(Species_count = as.character)) # coerce into characters
 ```
 
 
@@ -221,6 +247,7 @@ We want to focus on the presence and absence of species and not the count. Let's
 
 ```{r}
 species_presence <- species_long %>%
+  mutate(Species_presence = ifelse(Species_count == "0", 0, 1))
   
 ```
 
@@ -228,6 +255,8 @@ We can remove some columns: "Num_observers", "All_obs_reported", "Observer_hours
 
 ```{r}
 species_presence <- species_presence %>%
+  select(-c(Num_observers, All_obs_reported, Observer_hours)) %>%
+  filter(Species_presence == 1)
   
 
 ```
@@ -236,8 +265,8 @@ Last but not least, let's have a look at our species list
 
 ```{r}
 species_presence %>%
-  filter(species_presence == 1) %>%
-  count(species) %>%
+  filter(Species_presence == 1) %>%
+  count(Species) %>%
   arrange(desc(n))
 ```
 
@@ -254,4 +283,38 @@ write_csv(species_presence, file.path(datadir_processed, "species_presence.csv")
 ```
 
 
+```{r}
+unique(snowsurvey_fixed$Site)
+length(unique(snowsurvey_fixed$Site))
+
+unique(snowsurvey_fixed$Year)
+length(unique(snowsurvey_fixed$Year))
+
+unique(snowsurvey_fixed$Date)
+length(unique(snowsurvey_fixed$Date))
+
+unique(snowsurvey_fixed$Plot)
+length(unique(snowsurvey_fixed$Plot))
+
+unique(snowsurvey_fixed$Location)
+length(unique(snowsurvey_fixed$Location))
+
+unique(snowsurvey_fixed$Snow_cover)
+length(unique(snowsurvey_fixed$Snow_cover))
+
+unique(snowsurvey_fixed$Water_cover)
+length(unique(snowsurvey_fixed$Water_cover))
+
+unique(snowsurvey_fixed$Land_cover)
+length(unique(snowsurvey_fixed$Land_cover))
+
+unique(snowsurvey_fixed$Total_cover)
+length(unique(snowsurvey_fixed$Total_cover))
+
+unique(snowsurvey_fixed$Observer)
+length(unique(snowsurvey_fixed$Observer))
+
+unique(snowsurvey_fixed$Notes)
+length(unique(snowsurvey_fixed$Notes))
+```
 
