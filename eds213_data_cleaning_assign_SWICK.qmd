@@ -1,0 +1,213 @@
+---
+title: "EDS213 Data Cleaning Assignment"
+author: "Rachel Swick"
+date: 04-16-2025
+format: html
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r}
+#| message: false  
+
+# Libraries
+library(tidyverse)
+
+# File names
+datadir_processed <- file.path("data", "processed/")
+
+# Cleaned data
+snow_cover <- "snow_cover.csv"
+```
+
+The goal of this homework assignment is to clean the `Land_cover` and `Water_cover` columns from the Snow Survey data. Then use those cleaned columns to help fill missing values and recalculate an accurate `Total_cover` column.
+
+### Data Exploration
+
+Import the processed data from the snow survey which includes land and water cover data 
+
+```{r}
+#| message: false
+
+# Import the processed snow cover file
+snow_cover_clean <- read_csv(file.path(datadir_processed, snow_cover))
+glimpse(snow_cover_clean)
+```
+### Data Cleaning
+
+Determine what non-numeric characters in the `Water_cover` and `Land_cover` columns are causing the column to be type character instead of type numeric and address those cases. 
+
+
+```{r}
+snow_cover_clean %>%
+  count(Water_cover) %>%
+  filter(is.na(as.numeric(Water_cover)))
+
+snow_cover_clean %>%
+  count(Land_cover) %>%
+  filter(is.na(as.numeric(Land_cover)))
+```
+
+The Readme file associated with this data states that the "-" icon stands for NA. Based on an examination of the data, we are going to go ahead and assume that ".", "n/a", and "unk" also stand for NA.
+
+
+```{r}
+snowcover_fixed <- snow_cover_clean %>%
+  # Set random characters as NA in `Water_cover` column
+  mutate(Water_cover = case_when(Water_cover == "." ~ NA,
+                                 Water_cover == "-" ~ NA,
+                                 Water_cover == "n/a" ~ NA,
+                                 Water_cover == "unk" ~ NA,
+                                 TRUE ~ Water_cover)) %>% 
+  # Set random characters as NA in `Land_cover` column
+  mutate(Land_cover = case_when(Land_cover == "." ~ NA,
+                                Land_cover == "-" ~ NA,
+                                Land_cover == "n/a" ~ NA,
+                                Land_cover == "unk" ~ NA,
+                                TRUE ~ Land_cover)) %>% 
+  # Transform the `Water_cover` and `Land_cover` columns into type numeric
+  mutate(Water_cover = as.numeric(Water_cover), Land_cover = as.numeric(Land_cover))
+```
+
+We now need to determine if there are any values in the `Water_cover` or `Land_cover` columns that are above 100, as these values would not make sense for percentages. We also need to determine if there are any values in the `Water_cover` or `Land_cover` columns that are below 0, as these values also would not make sense for percentages.
+
+```{r}
+snowcover_fixed %>%
+  filter(Water_cover > 100)
+
+snowcover_fixed %>%
+  filter(Land_cover > 100)
+```
+
+```{r}
+snowcover_fixed %>%
+  filter(Water_cover < 0)
+
+snowcover_fixed %>%
+  filter(Land_cover < 0)
+```
+
+The `Water_cover` column has one row with a value of over 100, and the `Land_cover` column has two rows with values of below 0. We are going to assume these are errors and set all three values to NA.
+
+```{r}
+snowcover_fixed <- snowcover_fixed %>% 
+  # Set values above 100 to NA
+  mutate(Water_cover = case_when(Water_cover > 0 ~ NA,
+                                 TRUE ~ Water_cover)) %>% 
+  # Set values below 0 to NA
+  mutate(Land_cover = case_when(Land_cover < 0 ~ NA,
+                                 TRUE ~ Land_cover)) 
+```
+
+It is good practice to confirm that the values have actually been set to NA values, so we are going to go ahead and check.
+
+```{r}
+snowcover_fixed %>%
+  filter(Water_cover > 100)
+
+snowcover_fixed %>%
+  filter(Land_cover > 100)
+```
+
+```{r}
+snowcover_fixed %>%
+  filter(Water_cover < 0)
+
+snowcover_fixed %>%
+  filter(Land_cover < 0)
+```
+
+Now we are moving on to cleaning the `Total_cover` column. Since percent cover is typically out of 100, we would expect the only values in the `Total_cover` column to be 100 and 0. We first need to determine what values are actually in the `Total_cover` column and then we can determine how best to address them. 
+
+```{r}
+snowcover_attempt <- snowcover_fixed %>% 
+  # Sum the values of the `Snow_cover`, `Water_cover`, and `Land_cover` columns
+  mutate(total = rowSums(across(c(Snow_cover, Water_cover, Land_cover)), na.rm = TRUE)) %>% 
+  filter(total != 100) %>% 
+  filter(total != 0)
+
+# Determine unique values in the `total` column
+unique(snowcover_attempt$total)
+```
+
+There are 4 scenarios for total_cover that does not add up to 100.
+
+1. Snow_cover, Water_cover, and Land_cover are NA
+2. Snow_cover, Water_cover, and Land_cover are 0
+3. Snow_cover, Water_cover, and Land_cover sum to over 100
+    
+    IF the total cover is over 100,
+    THEN subtract the amount over 100 from the Snow_cover value 
+    This is because Snow_cover tends to be the larger amount across an examination of the data frame
+    Because it is the larger value, it is more likely to be the one being over estimated
+    
+4. Snow_cover, Water_cover, and Land_cover sum to under 100
+
+    IF the total cover does not add up to 100,
+    THEN add the amount under 100 to the Land_cover value
+    This is because Water_cover is most frequently 0 in the data frame
+    UNLESS there is an NA value in the row's Water_cover column
+    THEN add the amount under 100 to the Water_cover value
+    BUT only if there is a value in either Snow_cover or Land_cover
+
+```{r}
+total_covers_fixed <- snowcover_fixed %>% 
+  
+  # Sum the values of Snow_cover, Water_cover, and Land_cover
+  mutate(Total_cover = rowSums(across(c(Snow_cover, Water_cover, Land_cover)), na.rm = TRUE),
+         
+         # Adjust Snow_cover if total > 100
+         Snow_cover = ifelse(
+           Total_cover > 100,
+           Snow_cover - (Total_cover - 100),
+           Snow_cover),
+         
+         # Adjust Land_cover if total < 100 and Water_cover is not NA
+         Land_cover = ifelse(
+           Total_cover < 100 & !is.na(Water_cover),
+           Land_cover + (100 - Total_cover),
+           Land_cover),
+    
+         # Adjust Water_cover if total < 100 and Water_cover is NA
+         Water_cover = ifelse(
+           Total_cover < 100 & (!is.na(Snow_cover) | !is.na(Land_cover) ) & is.na(Water_cover),
+           100 - Total_cover,
+           Water_cover),
+    
+         # Recalculate Total_cover with the new cover values
+         Total_cover = rowSums(across(c(Snow_cover, Water_cover, Land_cover)), na.rm = TRUE))
+
+# Check that the only remaining Total_cover values are 0 and 1
+unique(total_covers_fixed$Total_cover)
+
+```
+
+### Write to CSV
+
+The final step is to write our cleaned data to a CSV file.
+
+```{r}
+# write the cleaned data to csv
+write_csv(total_covers_fixed, file.path(datadir_processed, "all_cover_fixed_SWICK.csv"))
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
